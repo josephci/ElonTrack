@@ -18,64 +18,78 @@ def run():
         # 固定寬高為 1920x1080
         context = browser.new_context(
             viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            # 加上更真實的 User Agent 和語言設定，假裝自己是真人電腦
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            locale="en-US"
         )
+        # 在無頭模式下啟用 JavaScript (通常是預設，但確認一下)
+        context.add_cookies([{'name': 'viewed_tour', 'value': 'true', 'domain': '.elon-tracker.com', 'path': '/'}])
+        
         page = context.new_page()
         
-        print("正在前往目標網頁...")
+        print("正在前往目標網頁 Analytics 頁面...")
         try:
             # 延長導航超時時間
-            page.goto("https://elon-tracker.com/analytics", wait_until="load", timeout=60000)
+            page.goto("https://elon-tracker.com/analytics", wait_until="load", timeout=90000)
             
-            # 強制等待 12 秒，讓網頁和所有的多步驟彈窗 thoroughly 載入出來
-            print("⏳ 正在等待網頁和導覽彈窗 (Live Stats, etc.) 全部出現...")
-            page.wait_for_timeout(12000)
+            # 💡 終極複合大招 1：處理多步驟導覽 (Welcome -> Live Stats -> etc.)
+            print("⏳ 正在等待網頁渲染和潛在的多步驟彈窗出現...")
+            page.wait_for_timeout(10000) 
             
-            # 💡 終極複合大招：DOM 元素強制解鎖
-            # 我們不再點擊 Skip，而是直接執行 JavaScript 把阻擋視線的「層」移除
-            print("💥 正在執行 JavaScript 暴力清除黑色遮罩層，讓背景變亮...")
+            # 定位並重複點擊 Skip 按鈕，直到找不到為止
+            # 這個按鈕的文字通常是 "Skip"
+            skip_button = page.locator('button:has-text("Skip")')
+            attempts = 0
+            while skip_button.is_visible() and attempts < 5:
+                print(f"偵測到導覽彈窗 (步驟 {attempts+1})！正在自動點擊 'Skip' 關閉它...")
+                skip_button.click()
+                attempts += 1
+                # 給彈窗切換動畫時間
+                page.wait_for_timeout(2000) 
+
+            # 💡 終極複合大招 2：DOM 暴力刪除備援 (如果 Skip 點擊無效)
+            print("💥 正在執行備援 JavaScript 暴力清除剩餘黑色遮罩與彈窗...")
             page.evaluate("""
                 () => {
-                    // 1. 尋找所有黑色的背景遮罩（Overlay/Backdrop）並直接刪除
-                    const masks = document.querySelectorAll('[class*="mask"], [class*="backdrop"], [class*="overlay"], .modal-backdrop');
+                    // 尋找所有黑色的背景遮罩（Mask/Overlay）並直接刪除
+                    const masks = document.querySelectorAll('[class*="mask"], [class*="backdrop"], [class*="overlay"], .modal-backdrop, [class*="driver"]');
                     masks.forEach(el => el.remove());
                     
-                    // 2. 恢復網頁被鎖定的滾動條
+                    // 尋找任何 role 為 dialog 的彈窗容器並刪除
+                    const dialogs = document.querySelectorAll('div[role="dialog"], .modal');
+                    dialogs.forEach(el => el.remove());
+                    
+                    // 恢復網頁被鎖定的滾動條
                     document.body.style.overflow = 'auto';
                     document.documentElement.style.overflow = 'auto';
-                    
-                    // 3. 尋找多步驟導覽容器（Pop-up），並嘗試點擊其 Skip (如果有的話，做為備援)
-                    const skipButton = document.querySelector('button:has-text("Skip")');
-                    if(skipButton) skipButton.click();
-                    
-                    // 4. 強制把彈窗的層級（z-index）變得很低，不擋住圖表
-                    const dialogs = document.querySelectorAll('div[role="dialog"], .popover');
-                    dialogs.forEach(el => el.style.zIndex = '-9999');
                 }
             """)
             
-            # 刪除遮罩後等待 3 秒讓網頁重繪
-            print("⏳ 黑色遮罩已強制移除，等待網頁重新渲染...")
-            page.wait_for_timeout(3000)
+            # 刪除遮罩後等待 4 秒讓網頁重繪
+            print("⏳ 彈窗與遮罩已解鎖，等待網頁重新渲染圖表...")
+            page.wait_for_timeout(4000) 
             
             # 精準捕捉 `canvas` 圖表區塊
-            chart_selector = "canvas"
-            # 此時，即便有彈窗擋在 X/Y 座標上，page.locator('canvas').screenshot() 也會無視層級強制拍出 canvas 本體。
-            canvases = page.locator(chart_selector)
+            # 我們這裡直接定位 Hourly Activity 熱力圖下方的 canvas，它比較穩定
+            hourly_chart_selector = "#hourly-heatmap-container canvas"
+            
+            # 如果 Hourly Activity 圖表不存在，就改截 Live Stats 圖表
+            if not page.locator(hourly_chart_selector).first.is_visible():
+                print("找不到 Hourly Activity 圖表，改為定位 Live Stats 圖表 canvas...")
+                hourly_chart_selector = "#live-stats-chart-container canvas"
+
+            canvases = page.locator(hourly_chart_selector)
             canvas_count = canvases.count()
             print(f"在網頁上找到了 {canvas_count} 個圖表組件")
             
             if canvas_count > 0:
-                # 截取第一個圖表，Playwright 的 element screenshot 會無視上方的彈窗層級，精準拍出內容。
-                # 此時背景黑色已經被我們移除，所以拍出來是白色的。
-                print("💥 正在強制拍下 canvas 本體 (無視上方的彈窗層級)...")
+                # 成功找到圖表，精準截圖第一個圖表（此時彈窗已解鎖，背景變亮）
                 chart_element = canvases.first
                 chart_element.screenshot(path=screenshot_path)
                 print(f"✅ 圖表截圖成功並儲存: {screenshot_path}")
-                caption_text = f"📊 Elon Tracker 數據更新 (彈窗遮罩已解鎖)\n時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                caption_text = f"📊 Elon Tracker 數據更新\n時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
             else:
-                # 如果還是抓不到特定區塊，就拍下全景排錯
-                print("⚠️ 奇怪，還是找不到 visible 的 canvas 標籤，改為全網頁偵錯截圖。")
+                print("⚠️ 未能精準定位 canvas 區塊，改為全網頁備份截圖。")
                 page.screenshot(path=screenshot_path, full_page=True)
                 caption_text = f"📊 Elon Tracker 全景偵錯截圖\n時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
