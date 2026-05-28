@@ -8,7 +8,7 @@ on:
 
 jobs:
   screenshot-and-save:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     
     # 授予工作流將新截圖提交回倉庫的權限
     permissions:
