@@ -15,6 +15,7 @@ def run():
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
+        # 固定寬高為 1920x1080，這樣點擊的座標才會精準
         context = browser.new_context(
             viewport={"width": 1920, "height": 1080},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -25,52 +26,39 @@ def run():
         try:
             page.goto("https://elon-tracker.com/analytics", wait_until="networkidle", timeout=60000)
             
-            # 先等待 5 秒讓網頁和彈窗全部加載出來
-            print("⏳ 等待網頁加載...")
-            page.wait_for_timeout(5000)
+            # 強制等待 8 秒，讓網頁和彈窗徹底定位
+            print("⏳ 等待網頁完全載入...")
+            page.wait_for_timeout(8000)
             
-            # 💡 終極大招：直接用 JavaScript 刪除所有彈窗與遮罩層
-            print("💥 正在執行 JavaScript 暴力清除彈窗與遮罩...")
-            page.evaluate("""
-                () => {
-                    // 1. 尋找並刪除所有可能包含 'Welcome to' 或 'Skip' 的彈窗容器
-                    const dialogs = document.querySelectorAll('div[role="dialog"], .modal, [class*="modal"], [class*="popup"]');
-                    dialogs.forEach(el => el.remove());
-                    
-                    # 2. 尋找所有黑色的背景遮罩（Overlay）並刪除
-                    # 依據你的截圖，遮罩通常是透明度黑底，或者帶有 backdrop-blur 的層
-                    const backdrops = document.querySelectorAll('[class*="backdrop"], [class*="overlay"], [class*="mask"]');
-                    backdrops.forEach(el => el.remove());
-                    
-                    // 3. 恢復網頁被鎖定的滾動條與背景亮度
-                    document.body.style.overflow = 'auto';
-                    document.body.style.pointerEvents = 'auto';
-                    document.documentElement.style.overflow = 'auto';
-                    
-                    // 嘗試直接清除第三方 Tour 插件產生的外殼
-                    const driverPopups = document.querySelectorAll('.driver-popover-item, .driver-overlay');
-                    driverPopups.forEach(el => el.remove());
-                }
-            """)
+            # 💡 核心大招：座標盲點法
+            # 在 1920x1080 的解析度下，那個 Welcome 彈窗的 "Skip" 按鈕大約在螢幕正中央偏下的位置
+            # 我們直接對著 X: 1070, Y: 600 的位置點擊滑鼠左鍵
+            print("🎯 正在往座標 (X: 1070, Y: 600) 模擬真人滑鼠點擊 'Skip'...")
+            page.mouse.click(1070, 600)
             
-            # 刪除後等待 2 秒讓網頁重繪
-            print("⏳ 彈窗已強制移除，等待網頁重新渲染...")
-            page.wait_for_timeout(2000)
+            # 萬一沒點準，我們對著右上角的 "X" 關閉按鈕 (大約在 X: 1110, Y: 300) 再點一下
+            page.wait_for_timeout(1000)
+            print("🎯 嘗試點擊右上角關閉按鈕備用座標 (X: 1110, Y: 300)...")
+            page.mouse.click(1110, 300)
             
-            # 檢查圖表是否存在
+            # 點完後等待 4 秒，讓遮罩黑影完全淡出
+            print("⏳ 等待遮罩動畫消失...")
+            page.wait_for_timeout(4000)
+            
+            # 檢查圖表
             chart_selector = "canvas"
             canvases = page.locator(chart_selector)
             canvas_count = canvases.count()
             print(f"在網頁上找到了 {canvas_count} 個圖表組件")
             
             if canvas_count > 0:
-                # 截取第一個圖表區塊
+                # 成功找到圖表，精準截圖第一個圖表
                 chart_element = canvases.first
                 chart_element.screenshot(path=screenshot_path)
                 print(f"✅ 圖表截圖成功: {screenshot_path}")
                 caption_text = f"📊 Elon Tracker 數據更新\n時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
             else:
-                # 如果還是抓不到特定區塊，就拍下被我們「強制去彈窗」後的網頁全景
+                # 如果還是抓不到特定區塊，就拍下全景
                 print("⚠️ 未能精準定位 canvas 區塊，改為全網頁截圖。")
                 page.screenshot(path=screenshot_path, full_page=True)
                 caption_text = f"📊 Elon Tracker 全景數據備份\n時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
