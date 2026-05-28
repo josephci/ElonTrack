@@ -43,7 +43,21 @@ jobs:
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
-        git add screenshots/*.png
-        # 只有在有新檔案時才 commit，避免沒有更新時報錯
-        git diff --quiet && git diff --staged --quiet || git commit -m "🤖 自動備份: 新增每小時截圖 [skip ci]"
-        git push
+        
+        # 💡 安全檢查 1：確保 screenshots 資料夾存在，避免 git add 找不到路徑
+        mkdir -p screenshots
+        
+        # 💡 安全檢查 2：檢查資料夾內是否有任何 .png 檔案
+        if [ -n "$(ls -A screenshots/*.png 2>/dev/null)" ]; then
+          git add screenshots/*.png
+          
+          # 只有在真的有圖表檔案被修改或新增時，才執行 commit 與 push
+          if ! git diff --cached --quiet; then
+            git commit -m "🤖 自動備份: 新增每小時截圖 [skip ci]"
+            git push
+          else
+            echo "圖片內容沒有變化，跳過本次提交。"
+          fi
+        else
+          echo "⚠️ 警告：在 screenshots 資料夾中找不到任何 PNG 檔案，可能是截圖失敗了！"
+        fi
